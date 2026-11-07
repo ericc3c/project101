@@ -290,6 +290,34 @@
   };
   window.MugenShell = Shell;
 
+  function detectPlatform() {
+    var ua = navigator.userAgent || "";
+    var ios = /iPad|iPhone|iPod/.test(ua) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+    if (ios) return "ios";
+    if (/Android/i.test(ua)) return "android";
+    return "desktop";
+  }
+  // iPhone keeps the quality that already runs well. Android and PCs start lower:
+  // the ink pipeline otherwise allocates a supersampled framebuffer up to 2160p
+  // plus a 4096 shadow map, which freezes desktop Chrome and stutters phones.
+  Shell.platform = detectPlatform();
+  Shell.profile = Shell.platform === "ios"
+    ? { auto: 1.6, hd: 1.5, ultra: 1.85, maxHeight: 2160, shadow: 4096, pixelCap: 0, maxPixelRatio: 2 }
+    : Shell.platform === "android"
+      ? { auto: 1, hd: 1, ultra: 1.15, maxHeight: 840, shadow: 1024, pixelCap: 1280 * 720, maxPixelRatio: 1.15 }
+      : { auto: 1, hd: 1.25, ultra: 1.5, maxHeight: 1080, shadow: 2048, pixelCap: 1920 * 1080, maxPixelRatio: 1.5 };
+  window.__mugenQuality = {
+    maxHeight: Shell.profile.maxHeight,
+    shadow: Shell.profile.shadow,
+    pixelCap: Shell.profile.pixelCap,
+    maxPixelRatio: Shell.profile.maxPixelRatio
+  };
+  function desiredDpr(mode) {
+    var p = Shell.profile;
+    var desired = mode === "1.85" ? p.ultra : mode === "1.5" ? p.hd : Math.min(p.auto, Math.max(1, Shell.nativeDpr));
+    return Math.max(1, Math.min(desired, Shell.nativeDpr, p.maxPixelRatio));
+  }
+
   try {
     var saveRaw = localStorage.getItem("sumiro.save.v1") || localStorage.getItem("ink_wanderer.save.v1");
     if (saveRaw) {
@@ -303,8 +331,8 @@
 
   var storedGfx = localStorage.getItem("mugen_gfx_mode");
   Shell.gfxMode = storedGfx === "1.5" || storedGfx === "1.85" || storedGfx === "auto" ? storedGfx : "auto";
-  var desiredDpr = Shell.gfxMode === "1.85" ? 1.85 : Shell.gfxMode === "1.5" ? 1.5 : Math.min(1.6, Math.max(1, Shell.nativeDpr));
-  Shell.targetMaxDpr = Math.max(1, Math.min(desiredDpr, Shell.nativeDpr));
+  var desiredDprValue = desiredDpr(Shell.gfxMode);
+  Shell.targetMaxDpr = desiredDprValue;
   Shell.currentDpr = Shell.targetMaxDpr;
   try {
     Object.defineProperty(window, "devicePixelRatio", {
@@ -425,7 +453,9 @@
     }
   };
 
-  try { window.createImageBitmap = undefined; } catch (err) {}
+  if (Shell.platform === "ios") {
+    try { window.createImageBitmap = undefined; } catch (err) {}
+  }
 
   if (window.CanvasRenderingContext2D) {
     ["fillText", "strokeText"].forEach(function (name) {
@@ -457,7 +487,8 @@
   HTMLCanvasElement.prototype.getContext = function (type, attrs) {
     if (type === "webgl" || type === "webgl2" || type === "experimental-webgl") {
       var next = Object.assign({}, attrs);
-      if (!next.powerPreference) next.powerPreference = "high-performance";
+      if (Shell.platform === "desktop") next.powerPreference = "default";
+      else if (!next.powerPreference) next.powerPreference = "high-performance";
       return patchGl(nativeGetContext.call(this, type, next));
     }
     return nativeGetContext.call(this, type, attrs);
@@ -1086,8 +1117,8 @@
       if (GFX_MODES.indexOf(mode) === -1) mode = "auto";
       Shell.gfxMode = mode;
       try { localStorage.setItem("mugen_gfx_mode", mode); } catch (err) {}
-      var desired = mode === "1.85" ? 1.85 : mode === "1.5" ? 1.5 : Math.min(1.6, Math.max(1, Shell.nativeDpr));
-      Shell.targetMaxDpr = Math.max(1, Math.min(desired, Shell.nativeDpr));
+      var desired = desiredDpr(mode);
+      Shell.targetMaxDpr = desired;
       Shell.currentDpr = Shell.targetMaxDpr;
       window.dispatchEvent(new Event("resize"));
       var row = document.querySelector("#ink-ui li.mugen-gfx");
